@@ -12,3 +12,6 @@ artifacts/runs/*
 !artifacts/runs/.gitkeep
 artifacts/reports/*
 !artifacts/reports/.gitkeep
+artifacts/chunks/*
+!artifacts/chunks/.gitkeep
+*.egg-info/

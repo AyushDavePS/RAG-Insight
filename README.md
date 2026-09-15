@@ -26,7 +26,7 @@ ollama pull llama3.2
 streamlit run app.py
 ```
 
-The first retrieval request/model initialization downloads Sentence Transformers models. Generation, grading, and rewriting use the Ollama endpoint in `.env`. An unavailable endpoint or malformed model response produces an explicit error, not a fabricated answer.
+The current Streamlit screen is the Phase 1 ingestion-and-chunk inspection workflow: it does not load embeddings, create an index, or call an LLM. The configured Phase 2 embedding backend is local Ollama (`nomic-embed-text:latest`); Sentence Transformers remains selectable for environments with Hugging Face access. Generation, grading, and rewriting use the Ollama endpoint in `.env`. An unavailable endpoint or malformed model response produces an explicit error, not a fabricated answer.
 
 CLI alternative:
 
@@ -34,6 +34,17 @@ CLI alternative:
 rag-insight ingest data/sample_documents
 rag-insight ask "Why was Redis selected?"
 ```
+
+Inspect parsing, provenance, and chunk boundaries without creating embeddings or an index:
+
+```powershell
+rag-insight inspect data/sample_documents --strategy recursive --format markdown --output artifacts/chunks/recursive.md
+rag-insight inspect data/sample_documents --strategy structure --format markdown --output artifacts/chunks/structure.md
+```
+
+The inspection command loads the configured embedding tokenizer only. If that cannot load, it writes a clearly
+labelled conservative character-budget artifact instead. Use `--strict-tokenizer` when model-token counts are
+required. Its local outputs are ignored by Git.
 
 ## Architecture
 
