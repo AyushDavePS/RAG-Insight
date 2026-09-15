@@ -1,0 +1,8 @@
+{
+  "dense_recursive": {"chunk_strategy": "recursive", "retrieval_mode": "dense", "rerank": false, "corrective": false},
+  "dense_structure": {"chunk_strategy": "structure", "retrieval_mode": "dense", "rerank": false, "corrective": false},
+  "hybrid": {"chunk_strategy": "structure", "retrieval_mode": "hybrid", "rerank": false, "corrective": false},
+  "hybrid_rerank": {"chunk_strategy": "structure", "retrieval_mode": "hybrid", "rerank": true, "corrective": false},
+  "corrective": {"chunk_strategy": "structure", "retrieval_mode": "hybrid", "rerank": true, "corrective": true},
+  "corrective_mmr": {"chunk_strategy": "structure", "retrieval_mode": "hybrid", "rerank": true, "corrective": true, "mmr": true}
+}

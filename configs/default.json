@@ -1,0 +1,9 @@
+{
+  "embedding_backend": "ollama",
+  "embedding_model": "nomic-embed-text:latest",
+  "chunk_strategy": "structure",
+  "retrieval_mode": "hybrid",
+  "rerank": false,
+  "mmr": false,
+  "corrective": true
+}
