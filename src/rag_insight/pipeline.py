@@ -32,17 +32,23 @@ class Pipeline:
         if self.store.signature() not in {None, self.signature()}:
             raise ValueError("Settings do not match the index configuration")
         rows = self.store.all()
+        embedding_start = perf_counter()
+        query_vector = self.embedder.encode([query])[0] if rows and s.retrieval_mode != "bm25" else None
+        embedding_seconds = perf_counter() - embedding_start
         start = perf_counter()
-        dense = dense_search(self.embedder.encode([query])[0], rows, s.candidate_k) if rows and s.retrieval_mode != "bm25" else []
+        dense = dense_search(query_vector, rows, s.candidate_k) if query_vector is not None else []
         lexical = bm25_search(query, rows, s.candidate_k) if s.retrieval_mode != "dense" else []
         merged = fuse([dense, lexical], s.rrf_k) if s.retrieval_mode == "hybrid" else dense or lexical
         candidates = merged[:s.candidate_k]
         if s.rerank:
             candidates = self.reranker.rank(query, candidates)
-        context = select_context(candidates, rows, s, self.embedder.tokenizer)
+        context = select_context(candidates, rows, s, self.embedder.tokenizer, query)
         trace = {"query": query, "dense": len(dense), "bm25": len(lexical),
                  "merged": len(merged), "reranked": len(candidates) if s.rerank else 0,
-                 "selected": len(context), "retrieval_seconds": perf_counter() - start,
+                 "selected": len(context), "embedding_seconds": embedding_seconds,
+                 "retrieval_seconds": perf_counter() - start,
+                 "embedding_backend": s.embedding_backend, "embedding_model": s.embedding_model,
+                 "embedding_dimension": len(query_vector) if query_vector is not None else None,
                  "ranking": [{"chunk_id": c.chunk.chunk_id, "score": c.score,
                               "filename": c.chunk.filename} for c in candidates],
                  "context_ids": [c.chunk.chunk_id for c in context]}

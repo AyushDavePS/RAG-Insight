@@ -5,7 +5,7 @@ from dataclasses import dataclass
 class Settings:
     embedding_backend: str = "ollama"
     chunk_strategy: str = "structure"
-    chunk_tokens: int = 220
+    chunk_tokens: int = 500
     overlap_tokens: int = 30
     embedding_model: str = "nomic-embed-text:latest"
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
@@ -19,6 +19,8 @@ class Settings:
     mmr_lambda: float = 0.7
     corrective: bool = True
     ollama_url: str = "http://localhost:11434"
+    llm_model: str = "llama3.2:latest"
+    llm_url: str = "http://localhost:11434/api/chat"
 
     def __post_init__(self):
         if self.embedding_backend not in {"ollama", "sentence_transformers"}:

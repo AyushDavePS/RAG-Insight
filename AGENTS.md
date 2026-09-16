@@ -39,9 +39,10 @@ Use `.\.venv\Scripts\python.exe` directly when activation is unavailable.
 - Do not fabricate benchmark results, confidence values, citations, or model output.
 - Keep the original question unchanged for grading and generation; rewritten queries affect retrieval only.
 - Permit at most one corrective retrieval retry.
-- Keep SQLite exact search as a transparent baseline when adding Qdrant.
+- Keep SQLite exact search as a transparent baseline when adding ChromaDB.
 - Add dependencies to `pyproject.toml`; do not add `requirements.txt` unless a deployment target requires it.
 - Do not commit `.env`, uploaded documents, generated indexes, model caches, or run artifacts containing document text.
+- Never commit or push files under `docs/` or `docs/dev-docs/` unless the user explicitly authorizes those paths in the current request. Keep documentation changes local and uncommitted by default.
 - Update documentation when architecture, configuration, commands, or known limitations change.
 - Avoid unrelated product features until the core evaluation gates pass.
 

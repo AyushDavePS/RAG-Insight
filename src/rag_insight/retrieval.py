@@ -14,6 +14,9 @@ def dot(a, b):
 
 
 def dense_search(query_vector, rows, k):
+    dimensions = {len(vector) for _, vector in rows}
+    if len(dimensions) > 1 or (dimensions and len(query_vector) not in dimensions):
+        raise ValueError("Query and stored embedding dimensions do not match")
     return sorted([Candidate(chunk, dot(query_vector, vector)) for chunk, vector in rows],
                   key=lambda item: item.score, reverse=True)[:k]
 
@@ -48,9 +51,37 @@ def fuse(rankings, k=60):
                   key=lambda item: item.score, reverse=True)
 
 
-def select_context(candidates, rows, settings, tokenizer):
+def _focus_terms(query):
+    stop_words = {"a", "all", "an", "and", "are", "at", "for", "from", "in", "inside", "is", "list",
+                  "of", "on", "out", "present", "the", "their", "to", "what", "which", "with"}
+    return {term.rstrip("s") if len(term) > 3 else term for term in terms(query)
+            if term not in stop_words}
+
+
+def _term_overlap(query_terms, text):
+    text_terms = {term.rstrip("s") if len(term) > 3 else term for term in terms(text)}
+    return len(query_terms & text_terms)
+
+
+def _is_aggregate_query(query):
+    return bool({"all", "each", "every", "list", "compare", "both", "across"} & set(terms(query)))
+
+
+def select_context(candidates, rows, settings, tokenizer, query=None):
     vectors = {chunk.chunk_id: vector for chunk, vector in rows}
+    all_candidates = list(candidates)
     remaining, selected, used = list(candidates), [], 0
+    aggregate = bool(query and _is_aggregate_query(query))
+    if query:
+        query_terms = _focus_terms(query)
+        overlaps = {candidate.chunk.chunk_id: _term_overlap(query_terms, candidate.chunk.text)
+                    for candidate in remaining}
+        strongest = max(overlaps.values(), default=0)
+        # A uniquely specific lexical match is safer context than near-tied
+        # dense candidates containing unrelated lists from the same document.
+        if strongest >= 2:
+            remaining = [candidate for candidate in remaining
+                         if overlaps[candidate.chunk.chunk_id] == strongest]
     # Rank-normalized relevance avoids mixing uncalibrated reranker logits with cosine.
     relevance = {c.chunk.chunk_id: 1 - i / max(len(candidates), 1)
                  for i, c in enumerate(candidates)}
@@ -68,4 +99,10 @@ def select_context(candidates, rows, settings, tokenizer):
         if used + size <= settings.context_tokens:
             selected.append(best)
             used += size
+            if aggregate and best.chunk.page is not None:
+                siblings = [candidate for candidate in all_candidates
+                            if candidate.chunk.document_id == best.chunk.document_id
+                            and candidate.chunk.page == best.chunk.page
+                            and candidate not in selected]
+                remaining = siblings + [candidate for candidate in remaining if candidate not in siblings]
     return selected

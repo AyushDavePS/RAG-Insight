@@ -16,4 +16,5 @@ def build(settings, index: Path):
     else:
         embedder = SentenceTransformerEmbedder(settings.embedding_model)
     return Pipeline(settings, Store(index), embedder,
-                    Reranker(settings.reranker_model) if settings.rerank else None, LLM())
+                    Reranker(settings.reranker_model) if settings.rerank else None,
+                    LLM(settings.llm_model, settings.llm_url))

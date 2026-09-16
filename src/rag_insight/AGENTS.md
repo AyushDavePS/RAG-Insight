@@ -34,7 +34,7 @@ Avoid moving responsibilities across these boundaries without updating architect
 
 ## Vector storage
 
-- Keep storage access behind a shared contract when introducing Qdrant.
+- Keep storage access behind a shared contract when introducing ChromaDB.
 - Preserve `SQLiteExactStore` behavior for unit tests and baseline experiments.
 - Isolate indexes or collections when embedding model, vector dimension, chunk strategy, chunk size, or schema changes.
 - Store complete citation metadata with vectors.

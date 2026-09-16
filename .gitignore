@@ -15,3 +15,5 @@ artifacts/reports/*
 artifacts/chunks/*
 !artifacts/chunks/.gitkeep
 *.egg-info/
+.pytest-phase2-tmp
+AGENTS.md

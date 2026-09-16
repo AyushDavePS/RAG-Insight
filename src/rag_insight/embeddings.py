@@ -1,8 +1,16 @@
 import json
+import math
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from .inspection import CharacterBudgetTokenizer
+
+
+def _normalize(vector):
+    norm = math.sqrt(sum(value * value for value in vector))
+    if norm == 0:
+        raise RuntimeError("Embedding model returned a zero vector")
+    return [value / norm for value in vector]
 
 
 class SentenceTransformerEmbedder:
@@ -42,7 +50,10 @@ class OllamaEmbedder:
             vector = result.get("embeddings", [None])[0]
             if vector is None:
                 vector = result.get("embedding")
-            if not isinstance(vector, list):
+            if not isinstance(vector, list) or not vector or not all(isinstance(value, (int, float)) for value in vector):
                 raise RuntimeError("Ollama returned an invalid embedding response")
-            embeddings.append(vector)
+            embeddings.append(_normalize(vector))
+        dimensions = {len(vector) for vector in embeddings}
+        if len(dimensions) != 1:
+            raise RuntimeError("Ollama returned embeddings with inconsistent dimensions")
         return embeddings

@@ -7,6 +7,7 @@ import json
 import sqlite3
 from dataclasses import asdict
 from pathlib import Path
+from threading import RLock
 
 from .models import Chunk
 
@@ -14,15 +15,19 @@ from .models import Chunk
 class Store:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.connection = sqlite3.connect(path)
+        # Streamlit may rerun a session on a different script thread. SQLite
+        # operations remain serialized by the re-entrant lock below.
+        self.connection = sqlite3.connect(path, check_same_thread=False)
+        self._lock = RLock()
         self.connection.execute("CREATE TABLE IF NOT EXISTS chunks (id TEXT PRIMARY KEY, document TEXT, metadata TEXT, vector TEXT)")
         self.connection.execute("CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)")
 
     def close(self):
         """Release the database connection owned by this store."""
-        if self.connection is not None:
-            self.connection.close()
-            self.connection = None
+        with self._lock:
+            if self.connection is not None:
+                self.connection.close()
+                self.connection = None
 
     def __enter__(self):
         return self
@@ -33,23 +38,29 @@ class Store:
     def replace_document(self, document_id, chunks, vectors, signature):
         if not chunks or len(chunks) != len(vectors):
             raise ValueError("Each nonempty chunk set must have matching embeddings")
+        dimensions = {len(vector) for vector in vectors}
+        if not dimensions or 0 in dimensions or len(dimensions) != 1:
+            raise ValueError("All stored embeddings must have one nonzero dimension")
         if any(chunk.document_id != document_id for chunk in chunks):
             raise ValueError("Chunks must belong to the document being replaced")
-        previous = self.signature()
-        if previous is not None and previous != signature:
-            raise ValueError("Index configuration differs. Use a separate index for this experiment.")
-        with self.connection:
-            self.connection.execute("INSERT OR REPLACE INTO config VALUES ('signature', ?)", (signature,))
-            self.connection.execute("DELETE FROM chunks WHERE document = ?", (document_id,))
-            self.connection.executemany("INSERT INTO chunks VALUES (?, ?, ?, ?)", [
-                (chunk.chunk_id, document_id, json.dumps(asdict(chunk)), json.dumps(vector))
-                for chunk, vector in zip(chunks, vectors, strict=True)
-            ])
+        with self._lock:
+            previous = self.signature()
+            if previous is not None and previous != signature:
+                raise ValueError("Index configuration differs. Use a separate index for this experiment.")
+            with self.connection:
+                self.connection.execute("INSERT OR REPLACE INTO config VALUES ('signature', ?)", (signature,))
+                self.connection.execute("DELETE FROM chunks WHERE document = ?", (document_id,))
+                self.connection.executemany("INSERT INTO chunks VALUES (?, ?, ?, ?)", [
+                    (chunk.chunk_id, document_id, json.dumps(asdict(chunk)), json.dumps(vector))
+                    for chunk, vector in zip(chunks, vectors, strict=True)
+                ])
 
     def signature(self):
-        row = self.connection.execute("SELECT value FROM config WHERE key = 'signature'").fetchone()
-        return row[0] if row else None
+        with self._lock:
+            row = self.connection.execute("SELECT value FROM config WHERE key = 'signature'").fetchone()
+            return row[0] if row else None
 
     def all(self):
-        rows = self.connection.execute("SELECT metadata, vector FROM chunks ORDER BY id").fetchall()
-        return [(Chunk(**json.loads(meta)), json.loads(vector)) for meta, vector in rows]
+        with self._lock:
+            rows = self.connection.execute("SELECT metadata, vector FROM chunks ORDER BY id").fetchall()
+            return [(Chunk(**json.loads(meta)), json.loads(vector)) for meta, vector in rows]
