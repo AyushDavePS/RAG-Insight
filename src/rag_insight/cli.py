@@ -3,6 +3,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
+from .baseline import run_baseline, write_baseline
 from .bootstrap import build
 from .config import Settings
 from .inspection import CharacterBudgetTokenizer, inspect_documents, write_inspection
@@ -10,7 +11,7 @@ from .inspection import CharacterBudgetTokenizer, inspect_documents, write_inspe
 
 def main():
     parser = argparse.ArgumentParser(description="Ingest documents or query RAG Insight")
-    parser.add_argument("command", choices=["ingest", "ask", "inspect"])
+    parser.add_argument("command", choices=["ingest", "ask", "inspect", "baseline"])
     parser.add_argument("value", help="Document directory or quoted question")
     parser.add_argument("--index", type=Path, default=Path("data/indexes/default.sqlite"))
     parser.add_argument("--config", type=Path, default=Path("configs/default.json"))
@@ -44,6 +45,19 @@ def main():
         if not paths:
             parser.error("No supported documents found")
         write_inspection(inspect_documents(paths, settings, tokenizer), args.output_format, args.output)
+        return
+    if args.command == "baseline":
+        if args.output is None:
+            parser.error("baseline requires --output")
+        pipeline = build(settings, args.index)
+        paths = sorted(p for p in Path(args.value).iterdir()
+                       if p.suffix.lower() in {".md", ".txt", ".pdf"})
+        if not paths:
+            parser.error("No supported documents found")
+        for path in paths:
+            pipeline.ingest(path)
+        write_baseline(run_baseline(pipeline), args.output)
+        pipeline.store.close()
         return
     pipeline = build(settings, args.index)
     if args.command == "ingest":

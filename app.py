@@ -1,10 +1,12 @@
 """Phase 1 Streamlit UI. Run from the repository root: streamlit run app.py."""
 import json
+from dataclasses import asdict
 from pathlib import Path
 from uuid import uuid4
 
 import streamlit as st
 
+from rag_insight.bootstrap import build
 from rag_insight.config import Settings
 from rag_insight.embeddings import OllamaEmbedder
 from rag_insight.inspection import CharacterBudgetTokenizer, format_inspection, inspect_documents
@@ -49,6 +51,8 @@ with st.sidebar:
     st.header("Active implementation")
     st.caption(f"Embedding backend: `{base_settings.embedding_backend}`")
     st.caption(f"Embedding model: `{base_settings.embedding_model}`")
+    st.caption(f"Generation model: `{base_settings.llm_model}`")
+    st.caption(f"Corrective retry: `{'enabled' if base_settings.corrective else 'disabled'}` · Ollama answer cap: `384 tokens`")
     st.caption("Embedding client: Python standard-library HTTP → Ollama `/api/embed`")
     st.caption("Parsing: `pypdf` + UTF-8 decoder · UI: `streamlit`")
     if st.button("Test embedding model"):
@@ -62,7 +66,7 @@ with st.sidebar:
     st.header("Chunk settings")
     strategy = st.selectbox("Strategy", ["structure", "recursive"],
                             help="Structure preserves Markdown heading ancestry; recursive is the baseline.")
-    chunk_tokens = st.number_input("Chunk budget", min_value=1, value=220, step=10,
+    chunk_tokens = st.number_input("Chunk budget", min_value=1, value=500, step=10,
                                    help="Character budget in this offline Phase 1 environment.")
     overlap_tokens = st.number_input("Overlap", min_value=0, max_value=chunk_tokens - 1,
                                      value=min(30, chunk_tokens - 1), step=1)
@@ -94,6 +98,10 @@ if st.button("Inspect documents", type="primary", disabled=not uploads):
     try:
         with st.spinner("Parsing documents and building inspectable chunks…"):
             st.session_state.inspection = inspect_uploads(uploads, settings, st.session_state.collection)
+            st.session_state.upload_paths = [
+                Path("data/uploads") / st.session_state.collection / Path(upload.name).name
+                for upload in uploads
+            ]
         st.success("Documents parsed and chunked. No embeddings or index were created.")
     except (OSError, UnicodeDecodeError, ValueError) as error:
         st.error(f"Could not inspect the upload: {error}")
@@ -130,3 +138,54 @@ if records:
                        "chunk-inspection.md", "text/markdown")
 else:
     st.caption("Upload supported documents and select Inspect documents to view chunks and source locations.")
+
+if records:
+    st.divider()
+    st.subheader("Index and query")
+    st.caption(f"Vector store: `data/indexes/{st.session_state.collection}.sqlite` · Backend: `{base_settings.embedding_backend}` · Model: `{base_settings.embedding_model}`")
+    if st.button("Index documents with Ollama", type="primary"):
+        index_settings = Settings(
+            embedding_backend=base_settings.embedding_backend,
+            embedding_model=base_settings.embedding_model,
+            ollama_url=base_settings.ollama_url,
+            chunk_strategy=strategy,
+            chunk_tokens=chunk_tokens,
+            overlap_tokens=overlap_tokens,
+            rerank=False,
+            corrective=base_settings.corrective,
+        )
+        try:
+            with st.spinner("Embedding chunks and writing the SQLite index…"):
+                pipeline = build(index_settings, Path("data/indexes") / f"{st.session_state.collection}.sqlite")
+                counts = [pipeline.ingest(path) for path in st.session_state.upload_paths]
+            st.session_state.pipeline = pipeline
+            st.session_state.indexed = True
+            st.success(f"Indexed {len(counts)} document(s) with {sum(counts)} chunks using Ollama.")
+        except (OSError, RuntimeError, ValueError) as error:
+            st.error(f"Could not index documents: {error}")
+
+if st.session_state.get("indexed") and st.session_state.get("pipeline"):
+    pipeline = st.session_state.pipeline
+    with st.form("question"):
+        question = st.text_input("Ask a question", placeholder="Which header authenticates API requests?")
+        submitted = st.form_submit_button("Ask")
+    if submitted:
+        try:
+            with st.spinner("Retrieving evidence and generating a cited answer…"):
+                st.session_state.answer = pipeline.ask(question)
+        except (OSError, RuntimeError, ValueError) as error:
+            st.error(f"Request failed: {error}")
+            st.session_state.pop("answer", None)
+    answer = st.session_state.get("answer")
+    if answer:
+        st.subheader("Answer")
+        st.write(answer.text)
+        st.caption(f"Evidence {'sufficient' if answer.sufficient else 'insufficient'}: {answer.reason}")
+        for number, source in enumerate(answer.sources, 1):
+            source_location = f"page {source.page}" if source.page else f"lines {source.line_start}-{source.line_end}"
+            with st.expander(f"[{number}] {source.filename} → {source.heading_path or source_location}"):
+                st.caption(source_location)
+                st.text(source.text)
+        with st.expander("Retrieval trace"):
+            st.json(answer.trace)
+        st.download_button("Download run", json.dumps(asdict(answer), indent=2), "rag-run.json")

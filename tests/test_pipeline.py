@@ -9,7 +9,7 @@ def test_retry_is_bounded_and_original_question_is_graded():
         def __init__(self):
             self.graded = []
 
-        def json(self, system, payload):
+        def json(self, system, payload, **kwargs):
             if "original_question" in payload:
                 return {"query": "rewritten search"}
             self.graded.append(payload["question"])

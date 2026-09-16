@@ -1,4 +1,5 @@
 import sqlite3
+from threading import Thread
 
 import pytest
 
@@ -55,3 +56,14 @@ def test_failed_insert_rolls_back_deletion_and_config_change(tmp_path):
         with pytest.raises(sqlite3.IntegrityError):
             store.replace_document("document", duplicate, [[2], [3]], "signature")
         assert [chunk.chunk_id for chunk, _ in store.all()] == ["old"]
+
+
+def test_store_can_be_read_from_another_thread(tmp_path):
+    store = Store(tmp_path / "index.sqlite")
+    store.replace_document("document", [make_chunk("one")], [[1, 0]], "signature")
+    result = []
+    worker = Thread(target=lambda: result.append(store.signature()))
+    worker.start()
+    worker.join()
+    store.close()
+    assert result == ["signature"]
