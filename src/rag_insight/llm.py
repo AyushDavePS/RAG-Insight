@@ -1,6 +1,7 @@
 """Ollama HTTP adapter; endpoint and model are configured through environment."""
 import json
 import os
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
@@ -26,8 +27,14 @@ class LLM:
         request = Request(os.getenv("RAG_LLM_URL", self.url),
                           data=json.dumps(body).encode(),
                           headers={"Content-Type": "application/json"})
-        with urlopen(request, timeout=120) as response:
-            result = json.loads(response.read())
+        try:
+            with urlopen(request, timeout=120) as response:
+                result = json.loads(response.read())
+        except HTTPError as error:
+            detail = error.read().decode(errors="replace")
+            raise RuntimeError(f"Ollama request failed ({error.code}): {detail}") from error
+        except (URLError, TimeoutError) as error:
+            raise RuntimeError(f"Ollama request failed at {self.url}: {error}") from error
         parsed = json.loads(result["message"]["content"])
         if not isinstance(parsed, dict):
             raise ValueError("LLM must return a JSON object")

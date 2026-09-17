@@ -10,7 +10,7 @@ class CharacterTokenizer:
 
 def test_fenced_heading_is_not_a_section_and_budget_is_bounded():
     section = Section("d", "v", "a.md", "# Main\n\n```python\n# code comment\nprint(1)\n```\n\n" + "x" * 180, line_start=1)
-    chunks = chunk_sections([section], Settings(chunk_tokens=80, overlap_tokens=10), CharacterTokenizer())
+    chunks = chunk_sections([section], Settings(chunk_strategy="structure", chunk_tokens=80, overlap_tokens=10), CharacterTokenizer())
     assert all(len(chunk.text) <= 80 for chunk in chunks)
     assert all(chunk.heading_path == "Main" for chunk in chunks)
     assert any("# code comment" in chunk.text for chunk in chunks)
@@ -20,7 +20,7 @@ def test_fenced_heading_is_not_a_section_and_budget_is_bounded():
 def test_structure_ancestry_resets_for_siblings_and_recursive_has_none():
     text = "# Root\n\n## First\n\none\n\n### Child\n\ntwo\n\n## Second\n\nthree"
     section = Section("d", "v", "a.md", text, line_start=1)
-    structure = chunk_sections([section], Settings(chunk_tokens=200), CharacterTokenizer())
+    structure = chunk_sections([section], Settings(chunk_strategy="structure", chunk_tokens=200), CharacterTokenizer())
     paths = [chunk.heading_path for chunk in structure]
     assert "Root > First > Child" in paths
     assert "Root > Second" in paths
@@ -38,3 +38,19 @@ def test_line_locations_overlap_and_ids_are_deterministic():
     assert all(chunk.line_start == 10 and chunk.line_end == 10 for chunk in first)
     assert all(len(chunk.text) <= settings.chunk_tokens for chunk in first)
     assert first[0].text[-3:] in first[1].text
+
+
+def test_hybrid_retains_structure_and_recursive_variants_without_exact_duplicates():
+    section = Section("d", "v", "a.md", "# Root\n\n## Child\n\nUseful evidence.", line_start=1)
+    chunks = chunk_sections([section], Settings(chunk_strategy="hybrid", chunk_tokens=200), CharacterTokenizer())
+    assert {chunk.chunk_variant for chunk in chunks} == {"structure", "recursive"}
+    assert any(chunk.heading_path == "Root > Child" for chunk in chunks)
+    assert any(not chunk.heading_path for chunk in chunks)
+    assert len({chunk.chunk_id for chunk in chunks}) == len(chunks)
+
+
+def test_hybrid_deduplicates_flat_content():
+    section = Section("d", "v", "a.txt", "Flat evidence.", line_start=1)
+    chunks = chunk_sections([section], Settings(chunk_strategy="hybrid", chunk_tokens=200), CharacterTokenizer())
+    assert len(chunks) == 1
+    assert chunks[0].chunk_variant == "structure"

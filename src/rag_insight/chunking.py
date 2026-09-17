@@ -50,13 +50,13 @@ def _blocks(section: Section, structure: bool) -> list[Section]:
     return output
 
 
-def chunk_sections(sections, settings, tokenizer) -> list[Chunk]:
+def _chunk_sections(sections, settings, tokenizer, structure, variant) -> list[Chunk]:
     def count(text):
         return len(tokenizer.encode(text, add_special_tokens=False))
 
     chunks = []
     for section in sections:
-        for block in _blocks(section, settings.chunk_strategy == "structure"):
+        for block in _blocks(section, structure):
             prefix = f"{block.heading_path}\n\n" if block.heading_path else ""
             # Avoid a very long heading consuming the complete budget.
             if count(prefix) >= settings.chunk_tokens // 2:
@@ -84,8 +84,14 @@ def chunk_sections(sections, settings, tokenizer) -> list[Chunk]:
                 if block.line_start is not None:
                     meta["line_start"] = block.line_start + block.text[:position].count("\n")
                     meta["line_end"] = block.line_start + block.text[:end].rstrip("\n").count("\n")
-                identity = f"{block.document_id}:{block.version}:{len(chunks)}:{text}"
-                chunks.append(Chunk(**meta, chunk_id=sha256(identity.encode()).hexdigest()[:20]))
+                content_hash = sha256(text.encode("utf-8")).hexdigest()
+                identity = f"{block.document_id}:{block.version}:{len(chunks)}:{content_hash}"
+                chunks.append(Chunk(
+                    **meta,
+                    chunk_id=sha256(identity.encode()).hexdigest()[:20],
+                    content_hash=content_hash,
+                    chunk_variant=variant,
+                ))
                 if end == len(block.text):
                     break
                 next_start = end
@@ -95,3 +101,27 @@ def chunk_sections(sections, settings, tokenizer) -> list[Chunk]:
                     next_start -= 1
                 position = next_start
     return chunks
+
+
+def chunk_sections(sections, settings, tokenizer) -> list[Chunk]:
+    """Build recursive, structure-aware, or deduplicated hybrid chunk variants.
+
+    Hybrid retains structure-aware chunks first, then adds recursive chunks only
+    when their exact text is not already represented. This preserves heading-rich
+    retrieval while retaining a heading-free fallback for the same source.
+    """
+    if settings.chunk_strategy == "structure":
+        return _chunk_sections(sections, settings, tokenizer, structure=True, variant="structure")
+    if settings.chunk_strategy == "recursive":
+        return _chunk_sections(sections, settings, tokenizer, structure=False, variant="recursive")
+    structured = _chunk_sections(sections, settings, tokenizer, structure=True, variant="structure")
+    recursive = _chunk_sections(sections, settings, tokenizer, structure=False, variant="recursive")
+    output, seen = [], set()
+    for chunk in [*structured, *recursive]:
+        # Exact duplicates are common for flat PDFs/text files; retaining both
+        # would only waste candidate and context capacity.
+        key = (chunk.document_id, chunk.page, chunk.line_start, chunk.line_end, chunk.content_hash)
+        if key not in seen:
+            output.append(chunk)
+            seen.add(key)
+    return output

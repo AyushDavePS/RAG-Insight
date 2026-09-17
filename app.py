@@ -1,6 +1,6 @@
-"""Phase 1 Streamlit UI. Run from the repository root: streamlit run app.py."""
+"""Local upload-to-cited-chat Streamlit application."""
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from uuid import uuid4
 
@@ -12,16 +12,15 @@ from rag_insight.embeddings import OllamaEmbedder
 from rag_insight.inspection import CharacterBudgetTokenizer, format_inspection, inspect_documents
 
 
-def location(record):
-    if record["page"] is not None:
-        return f"page {record['page']}"
-    if record["line_start"] is not None:
-        return f"lines {record['line_start']}-{record['line_end']}"
+def location(value):
+    if value.page is not None:
+        return f"page {value.page}"
+    if value.line_start is not None:
+        return f"lines {value.line_start}-{value.line_end}"
     return "location unavailable"
 
 
 def inspect_uploads(uploads, settings, collection):
-    """Persist session uploads, then parse and chunk without model calls."""
     names = [Path(upload.name).name for upload in uploads]
     if len(names) != len(set(names)):
         raise ValueError("Rename duplicate filenames before uploading them together.")
@@ -32,160 +31,148 @@ def inspect_uploads(uploads, settings, collection):
         path = root / name
         path.write_bytes(upload.getvalue())
         paths.append(path)
-    return inspect_documents(paths, settings, CharacterBudgetTokenizer())
+    return inspect_documents(paths, settings, CharacterBudgetTokenizer()), paths
 
 
-st.set_page_config(page_title="RAG Insight — Phase 1", page_icon="📚", layout="wide")
+def render_sources(sources):
+    for number, source in enumerate(sources, 1):
+        with st.expander(f"[{number}] {source.filename} - {source.heading_path or location(source)}"):
+            st.caption(f"{location(source)} | {source.source_uri or 'local upload'}")
+            st.text(source.text)
+
+
+def conversation_download(messages):
+    records = []
+    for message in messages:
+        record = {"role": message["role"], "content": message["content"]}
+        if "answer" in message:
+            record["answer"] = asdict(message["answer"])
+        records.append(record)
+    return json.dumps(records, indent=2, ensure_ascii=False)
+
+
+st.set_page_config(page_title="RAG Insight", page_icon="book", layout="wide")
 st.title("RAG Insight")
-st.caption("Phase 1: verify document ingestion, provenance, and chunk boundaries.")
-configured = json.loads(Path("configs/default.json").read_text(encoding="utf-8"))
-configured["chunk_strategy"] = "structure"
-base_settings = Settings(**configured)
-st.info("Document inspection does not create an index or call an LLM. The embedding model below is tested "
-        "separately; inspection uses a conservative character budget because Ollama does not expose its tokenizer.")
+st.caption("Upload documents, then ask grounded questions in a cited local chat.")
 
+configured = json.loads(Path("configs/default.json").read_text(encoding="utf-8"))
+base_settings = Settings(**configured)
 if "collection" not in st.session_state:
     st.session_state.collection = uuid4().hex
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
 with st.sidebar:
-    st.header("Active implementation")
-    st.caption(f"Embedding backend: `{base_settings.embedding_backend}`")
+    st.header("Active configuration")
+    st.caption(f"Vector backend: `{base_settings.vector_backend}`")
+    st.caption(f"Collection: `{base_settings.chroma_collection}`")
     st.caption(f"Embedding model: `{base_settings.embedding_model}`")
     st.caption(f"Generation model: `{base_settings.llm_model}`")
-    st.caption(f"Corrective retry: `{'enabled' if base_settings.corrective else 'disabled'}` · Ollama answer cap: `384 tokens`")
-    st.caption("Embedding client: Python standard-library HTTP → Ollama `/api/embed`")
-    st.caption("Parsing: `pypdf` + UTF-8 decoder · UI: `streamlit`")
+    st.caption(f"Agentic retrieval: `{'enabled' if base_settings.agentic else 'disabled'}`")
+    strategies = ["hybrid", "structure", "recursive"]
+    strategy = st.selectbox("Chunk strategy", strategies, index=strategies.index(base_settings.chunk_strategy),
+                            help="Hybrid retains structure-aware chunks and adds non-duplicate recursive fallbacks.")
+    chunk_tokens = st.number_input("Chunk budget", min_value=1, value=base_settings.chunk_tokens, step=10)
+    overlap_tokens = st.number_input("Overlap", min_value=0, max_value=chunk_tokens - 1,
+                                     value=min(base_settings.overlap_tokens, chunk_tokens - 1), step=1)
+    ocr_enabled = st.checkbox("OCR scanned PDFs with local PP-OCRv5 (CPU)", value=base_settings.ocr_enabled)
+    ocr_model = st.selectbox("OCR profile", ["mobile", "server"], index=0,
+                             help="Mobile is practical on CPU; server is slower and higher accuracy.")
     if st.button("Test embedding model"):
         try:
-            vector = OllamaEmbedder(base_settings.embedding_model, base_settings.ollama_url).encode(
-                ["Phase 1 embedding smoke test"]
-            )[0]
-            st.success(f"Ollama responded with {len(vector)} dimensions.")
+            vector = OllamaEmbedder(base_settings.embedding_model, base_settings.ollama_url).encode_batch(["smoke test"])[0]
+            st.success(f"Ollama returned {len(vector)} dimensions.")
         except RuntimeError as error:
             st.error(str(error))
-    st.header("Chunk settings")
-    strategy = st.selectbox("Strategy", ["structure", "recursive"],
-                            help="Structure preserves Markdown heading ancestry; recursive is the baseline.")
-    chunk_tokens = st.number_input("Chunk budget", min_value=1, value=500, step=10,
-                                   help="Character budget in this offline Phase 1 environment.")
-    overlap_tokens = st.number_input("Overlap", min_value=0, max_value=chunk_tokens - 1,
-                                     value=min(30, chunk_tokens - 1), step=1)
-    st.caption("The configured embedding tokenizer is unavailable, so these are conservative character units.")
 
-with st.expander("How to test Phase 1", expanded=False):
-    st.markdown(
-        "1. Upload `structured.md`, `unicode.txt`, and a small PDF.\n"
-        "2. Click **Inspect documents** and confirm document/chunk counts are nonzero.\n"
-        "3. Open chunks and verify heading paths, code fences, line/page locations, and source text.\n"
-        "4. Confirm **Missing locations** is zero for Markdown/text/PDF samples.\n"
-        "5. Upload an empty file, unsupported file, or image-only PDF and confirm a clear error.\n"
-        "6. Click **Test embedding model** and confirm Ollama returns 768 dimensions.\n\n"
-        "Automated coverage for replacement atomicity, rollback, deterministic IDs, and exact invariants "
-        "is run with `python -m pytest`; the UI is for interactive provenance review."
-    )
-
+settings = replace(base_settings, chunk_strategy=strategy, chunk_tokens=chunk_tokens,
+                   overlap_tokens=overlap_tokens, ocr_enabled=ocr_enabled, ocr_model=ocr_model)
 uploads = st.file_uploader("Upload Markdown, text, or text-based PDF documents", type=["md", "txt", "pdf"],
                            accept_multiple_files=True)
 if st.button("Inspect documents", type="primary", disabled=not uploads):
-    settings = Settings(
-        embedding_backend=base_settings.embedding_backend,
-        embedding_model=base_settings.embedding_model,
-        ollama_url=base_settings.ollama_url,
-        chunk_strategy=strategy,
-        chunk_tokens=chunk_tokens,
-        overlap_tokens=overlap_tokens,
-    )
     try:
-        with st.spinner("Parsing documents and building inspectable chunks…"):
-            st.session_state.inspection = inspect_uploads(uploads, settings, st.session_state.collection)
-            st.session_state.upload_paths = [
-                Path("data/uploads") / st.session_state.collection / Path(upload.name).name
-                for upload in uploads
-            ]
-        st.success("Documents parsed and chunked. No embeddings or index were created.")
+        records, paths = inspect_uploads(uploads, settings, st.session_state.collection)
+        st.session_state.inspection, st.session_state.upload_paths = records, paths
+        st.success("Documents parsed and chunked. Inspection does not call models or create an index.")
     except (OSError, UnicodeDecodeError, ValueError) as error:
-        st.error(f"Could not inspect the upload: {error}")
-        st.session_state.pop("inspection", None)
+        st.error(f"Could not inspect uploads: {error}")
 
 records = st.session_state.get("inspection", [])
 if records:
-    documents = sorted({record["filename"] for record in records})
-    missing_locations = sum(record["page"] is None and record["line_start"] is None for record in records)
-    max_tokens = max(record["token_count"] for record in records)
-    one, two, three, four = st.columns(4)
-    one.metric("Documents", len(documents))
-    two.metric("Chunks", len(records))
-    three.metric("Maximum budget units", max_tokens)
-    four.metric("Missing locations", missing_locations)
-
-    st.subheader("Chunk inventory")
-    table = [{"filename": record["filename"], "heading_path": record["heading_path"] or "—",
-              "location": location(record), "token_count": record["token_count"],
-              "chunk_id": record["chunk_id"]} for record in records]
-    st.dataframe(table, use_container_width=True, hide_index=True)
-
-    labels = {
-        f"{record['filename']} | {record['heading_path'] or 'no heading'} | {location(record)} | {record['chunk_id']}": record
-        for record in records
-    }
-    selected = labels[st.selectbox("Inspect a chunk", labels)]
-    st.caption(f"Tokenizer: {selected['tokenizer']} · Document version: {selected['document_version']}")
-    st.code(selected["text"], language="markdown" if selected["filename"].endswith(".md") else None)
-
-    st.download_button("Download inspection JSON", json.dumps(records, indent=2, ensure_ascii=False),
-                       "chunk-inspection.json", "application/json")
-    st.download_button("Download inspection Markdown", format_inspection(records, "markdown"),
-                       "chunk-inspection.md", "text/markdown")
-else:
-    st.caption("Upload supported documents and select Inspect documents to view chunks and source locations.")
-
-if records:
-    st.divider()
-    st.subheader("Index and query")
-    st.caption(f"Vector store: `data/indexes/{st.session_state.collection}.sqlite` · Backend: `{base_settings.embedding_backend}` · Model: `{base_settings.embedding_model}`")
-    if st.button("Index documents with Ollama", type="primary"):
-        index_settings = Settings(
-            embedding_backend=base_settings.embedding_backend,
-            embedding_model=base_settings.embedding_model,
-            ollama_url=base_settings.ollama_url,
-            chunk_strategy=strategy,
-            chunk_tokens=chunk_tokens,
-            overlap_tokens=overlap_tokens,
-            rerank=False,
-            corrective=base_settings.corrective,
-        )
+    with st.expander("Chunk inspection"):
+        st.dataframe([
+            {"filename": record["filename"], "heading": record["heading_path"] or "-",
+             "location": f"page {record['page']}" if record["page"] else f"lines {record['line_start']}-{record['line_end']}",
+             "tokens": record["token_count"], "chunk_id": record["chunk_id"]}
+            for record in records
+        ], use_container_width=True, hide_index=True)
+        st.download_button("Download inspection JSON", json.dumps(records, indent=2, ensure_ascii=False),
+                           "chunk-inspection.json", "application/json")
+        st.download_button("Download inspection Markdown", format_inspection(records, "markdown"),
+                           "chunk-inspection.md", "text/markdown")
+    if st.button("Index documents", type="primary"):
         try:
-            with st.spinner("Embedding chunks and writing the SQLite index…"):
-                pipeline = build(index_settings, Path("data/indexes") / f"{st.session_state.collection}.sqlite")
-                counts = [pipeline.ingest(path) for path in st.session_state.upload_paths]
-            st.session_state.pipeline = pipeline
-            st.session_state.indexed = True
-            st.success(f"Indexed {len(counts)} document(s) with {sum(counts)} chunks using Ollama.")
+            with st.spinner("Embedding and indexing documents..."):
+                pipeline = build(settings, Path("data/indexes") / f"{st.session_state.collection}.sqlite")
+                count = sum(pipeline.ingest(path) for path in st.session_state.upload_paths)
+            st.session_state.pipeline, st.session_state.indexed = pipeline, True
+            st.success(f"Indexed {count} chunks in this browser session's collection.")
         except (OSError, RuntimeError, ValueError) as error:
             st.error(f"Could not index documents: {error}")
 
-if st.session_state.get("indexed") and st.session_state.get("pipeline"):
-    pipeline = st.session_state.pipeline
-    with st.form("question"):
-        question = st.text_input("Ask a question", placeholder="Which header authenticates API requests?")
-        submitted = st.form_submit_button("Ask")
-    if submitted:
-        try:
-            with st.spinner("Retrieving evidence and generating a cited answer…"):
-                st.session_state.answer = pipeline.ask(question)
-        except (OSError, RuntimeError, ValueError) as error:
-            st.error(f"Request failed: {error}")
-            st.session_state.pop("answer", None)
-    answer = st.session_state.get("answer")
-    if answer:
-        st.subheader("Answer")
-        st.write(answer.text)
-        st.caption(f"Evidence {'sufficient' if answer.sufficient else 'insufficient'}: {answer.reason}")
-        for number, source in enumerate(answer.sources, 1):
-            source_location = f"page {source.page}" if source.page else f"lines {source.line_start}-{source.line_end}"
-            with st.expander(f"[{number}] {source.filename} → {source.heading_path or source_location}"):
-                st.caption(source_location)
-                st.text(source.text)
-        with st.expander("Retrieval trace"):
-            st.json(answer.trace)
-        st.download_button("Download run", json.dumps(asdict(answer), indent=2), "rag-run.json")
+pipeline = st.session_state.get("pipeline")
+if pipeline and st.session_state.get("indexed"):
+    controls = st.columns(2)
+    if controls[0].button("Reset chat"):
+        st.session_state.messages = []
+        st.rerun()
+    controls[1].caption(f"Session collection ID: `{st.session_state.collection}`")
+    confirmation = controls[1].text_input("Type the session ID above to clear its collection")
+    if controls[1].button("Clear collection", type="secondary"):
+        if confirmation != st.session_state.collection:
+            st.error("Collection was not cleared: confirmation must match this session ID.")
+        else:
+            try:
+                pipeline.clear_collection()
+                st.session_state.messages, st.session_state.indexed = [], False
+                st.success("This session's collection was cleared.")
+            except RuntimeError as error:
+                st.error(f"Could not clear the collection: {error}")
+
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.write(message["content"])
+            if "answer" in message:
+                answer = message["answer"]
+                st.caption(f"Evidence {'sufficient' if answer.sufficient else 'insufficient'}: {answer.reason}")
+                render_sources(answer.sources)
+                with st.expander("Tool and retrieval trace"):
+                    st.json(answer.trace)
+    question = st.chat_input("Ask a question about your indexed documents")
+    if question:
+        st.session_state.messages.append({"role": "user", "content": question})
+        history = [
+            {
+                "role": item["role"],
+                "content": item["content"],
+                **({"source_filenames": [source.filename for source in item["answer"].sources]}
+                   if "answer" in item else {}),
+            }
+            for item in st.session_state.messages[:-1]
+        ]
+        with st.chat_message("assistant"), st.spinner("Retrieving grounded evidence..."):
+            try:
+                answer = pipeline.ask(question, history=history)
+                st.write(answer.text)
+                st.caption(f"Evidence {'sufficient' if answer.sufficient else 'insufficient'}: {answer.reason}")
+                render_sources(answer.sources)
+                with st.expander("Tool and retrieval trace"):
+                    st.json(answer.trace)
+                st.session_state.messages.append({"role": "assistant", "content": answer.text, "answer": answer})
+            except (OSError, RuntimeError, ValueError) as error:
+                st.error(f"Could not answer the question: {error}")
+    if st.session_state.messages:
+        st.download_button("Download conversation", conversation_download(st.session_state.messages),
+                           "rag-conversation.json", "application/json")
+else:
+    st.info("Inspect and index at least one document to begin a cited chat.")

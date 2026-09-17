@@ -11,11 +11,20 @@ class Section:
     line_start: int | None = None
     line_end: int | None = None
     heading_path: str = ""
+    source_uri: str = ""
+    retrieved_at: str = ""
+    ocr_model: str = ""
 
 
 @dataclass
 class Chunk(Section):
     chunk_id: str = ""
+    content_hash: str = ""
+    embedding_model: str = ""
+    embedding_dimension: int | None = None
+    profile_role: str = ""
+    section_kind: str = ""
+    chunk_variant: str = ""
 
 
 @dataclass

@@ -8,6 +8,8 @@ data/uploads/*
 !data/uploads/.gitkeep
 data/indexes/*
 !data/indexes/.gitkeep
+data/models/*
+!data/models/.gitkeep
 artifacts/runs/*
 !artifacts/runs/.gitkeep
 artifacts/reports/*
@@ -17,3 +19,5 @@ artifacts/chunks/*
 *.egg-info/
 .pytest-phase2-tmp
 AGENTS.md
+artifacts
+docs\dev-docs

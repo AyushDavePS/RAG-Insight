@@ -1,13 +1,23 @@
 {
+  "vector_backend": "chroma",
+  "chroma_collection": "rag-insight",
+  "agentic": true,
+  "ocr_enabled": false,
+  "ocr_language": "en",
+  "ocr_render_dpi": 150,
+  "ocr_model": "mobile",
   "embedding_backend": "ollama",
   "embedding_model": "nomic-embed-text:latest",
   "llm_model": "llama3.2:latest",
   "llm_url": "http://localhost:11434/api/chat",
-  "chunk_strategy": "structure",
+  "chunk_strategy": "hybrid",
   "chunk_tokens": 500,
   "overlap_tokens": 50,
   "retrieval_mode": "hybrid",
-  "rerank": false,
+  "candidate_k": 20,
+  "context_k": 7,
+  "context_tokens": 2000,
+  "rerank": true,
   "mmr": false,
-  "corrective": false
+  "corrective": true
 }

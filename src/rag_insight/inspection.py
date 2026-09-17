@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .chunking import chunk_sections
 from .ingestion import parse_document
+from .ocr import PaddleOcrExtractor
 
 
 class CharacterBudgetTokenizer:
@@ -19,8 +20,9 @@ class CharacterBudgetTokenizer:
 def inspect_documents(paths, settings, tokenizer):
     """Parse and chunk files into serializable provenance records."""
     records = []
+    extractor = PaddleOcrExtractor(settings.ocr_language, settings.ocr_render_dpi, settings.ocr_model) if settings.ocr_enabled else None
     for path in sorted((Path(path) for path in paths), key=lambda item: item.name.lower()):
-        chunks = chunk_sections(parse_document(path), settings, tokenizer)
+        chunks = chunk_sections(parse_document(path, extractor), settings, tokenizer)
         for chunk in chunks:
             record = asdict(chunk)
             record["document_version"] = record.pop("version")

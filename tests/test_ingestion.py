@@ -2,7 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from rag_insight.ingestion import parse_document
+from rag_insight.ingestion import parse_document, parse_source
+from rag_insight.sources import LocalHtmlAdapter
 
 
 def test_markdown_and_unicode_text_preserve_content_and_locations(tmp_path):
@@ -77,3 +78,42 @@ def test_textless_pdf_fails_explicitly(monkeypatch, tmp_path):
     (tmp_path / "scan.pdf").write_bytes(b"pdf")
     with pytest.raises(ValueError, match="no extractable text; OCR is not supported"):
         parse_document(Path(tmp_path / "scan.pdf"))
+
+
+def test_textless_pdf_uses_opt_in_ocr_and_preserves_pages(monkeypatch, tmp_path):
+    class Reader:
+        def __init__(self, path):
+            self.pages = [type("Page", (), {"extract_text": lambda self: ""})(),
+                          type("Page", (), {"extract_text": lambda self: ""})()]
+
+    class Ocr:
+        model_id = "PP-OCRv5"
+
+        def extract_pdf(self, path):
+            return ["first page", "second page"]
+
+    import pypdf
+
+    monkeypatch.setattr(pypdf, "PdfReader", Reader)
+    source = tmp_path / "scan.pdf"
+    source.write_bytes(b"pdf")
+    sections = parse_document(source, Ocr())
+    assert [(section.text, section.page, section.ocr_model) for section in sections] == [
+        ("first page", 1, "PP-OCRv5"), ("second page", 2, "PP-OCRv5"),
+    ]
+
+
+def test_local_html_source_uses_the_same_provenance_contract(tmp_path):
+    source = tmp_path / "source.html"
+    source.write_text("<title>Example source</title><p>Useful evidence.</p><script>ignore()</script>", encoding="utf-8")
+    fetched = LocalHtmlAdapter().fetch(source)[0]
+    section = parse_source(fetched)[0]
+    assert section.filename == "Example source"
+    assert section.text == "Useful evidence."
+    assert section.source_uri == source.resolve().as_uri()
+    assert section.retrieved_at == fetched.retrieved_at
+
+
+def test_local_html_adapter_rejects_non_local_sources():
+    with pytest.raises(ValueError, match="supports only"):
+        LocalHtmlAdapter().fetch("https://example.test/source")

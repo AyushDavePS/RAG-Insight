@@ -15,7 +15,7 @@ class FakePipeline:
 
 def test_baseline_trace_is_serializable_and_records_model_metadata(tmp_path):
     result = run_baseline(FakePipeline(), queries=["Question"], expected_evidence={"Question": []})
-    assert result["stage"] == "structure_dense"
+    assert result["stage"] == "hybrid_dense"
     assert result["embedding"]["dimension"] == 2
     assert result["records"][0]["evidence_labels_selected"] == []
     output = tmp_path / "trace.json"

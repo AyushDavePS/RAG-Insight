@@ -6,7 +6,7 @@ Upload documents → ask a question → inspect the answer, source passages, and
 
 ## Status
 
-This repository is an initial implementation scaffold, not a validated benchmark or production service. It includes real pipeline adapters and a 24-question fictional benchmark. Model downloads, dependency installation, and end-to-end execution are required before claiming working results. No benchmark scores are fabricated.
+This repository is a working local RAG application, not a validated benchmark or production service. It includes real pipeline adapters and a 24-question fictional benchmark. Model downloads, dependency installation, manual citation review, and end-to-end evaluation are required before making quality claims. No benchmark scores are fabricated.
 
 ## Quick start
 
@@ -19,6 +19,12 @@ python -m pip install -e ".[dev]"
 Copy-Item .env.example .env
 ```
 
+For scanned/image-only PDFs, install the optional local CPU OCR stack:
+
+```powershell
+python -m pip install -e ".[ocr]"
+```
+
 Install and run Ollama separately, then pull the configured model:
 
 ```powershell
@@ -26,7 +32,7 @@ ollama pull llama3.2
 streamlit run app.py
 ```
 
-The current Streamlit screen is the Phase 1 ingestion-and-chunk inspection workflow: it does not load embeddings, create an index, or call an LLM. The configured Phase 2 embedding backend is local Ollama (`nomic-embed-text:latest`); Sentence Transformers remains selectable for environments with Hugging Face access. Generation, grading, and rewriting use the Ollama endpoint in `.env`. An unavailable endpoint or malformed model response produces an explicit error, not a fabricated answer.
+The Streamlit app supports document inspection, indexing, cited multi-turn chat, retrieval traces, and session-scoped collection clearing. The configured embedding backend is local Ollama (`nomic-embed-text:latest`) with ChromaDB as the primary local vector store; SQLite remains the exact-search baseline. Enable **OCR scanned PDFs with local PP-OCRv5 (CPU)** before inspecting or indexing an image-only PDF. OCR model files download locally on first use and are ignored by Git. Generation, grading, and rewriting use the Ollama endpoint in `.env`. An unavailable endpoint or malformed model response produces an explicit error, not a fabricated answer.
 
 CLI alternative:
 

@@ -4,7 +4,7 @@ from threading import Thread
 import pytest
 
 from rag_insight.models import Chunk
-from rag_insight.storage import Store
+from rag_insight.storage import ChromaStore, Store
 
 
 def make_chunk(chunk_id, document_id="document", text="text"):
@@ -67,3 +67,53 @@ def test_store_can_be_read_from_another_thread(tmp_path):
     worker.join()
     store.close()
     assert result == ["signature"]
+
+
+def test_chroma_store_persists_replaces_and_searches(tmp_path):
+    path = tmp_path / "chroma"
+    chunks = [
+        make_chunk("redis", "one", "Redis is used for caching"),
+        make_chunk("api", "two", "Send the X-API-Key header"),
+    ]
+    for chunk in chunks:
+        chunk.content_hash = f"hash-{chunk.chunk_id}"
+        chunk.embedding_model = "test-model"
+        chunk.embedding_dimension = 2
+    with ChromaStore(path, "test-rag") as store:
+        store.replace_document("one", [chunks[0]], [[1.0, 0.0]], "signature")
+        store.replace_document("two", [chunks[1]], [[0.0, 1.0]], "signature")
+        assert [candidate.chunk.chunk_id for candidate in store.dense_search([1.0, 0.0], 1)] == ["redis"]
+        assert store.cached_vectors(["hash-api"], "test-model") == {"hash-api": [0.0, 1.0]}
+        replacement = make_chunk("redis-new", "one", "Redis replacement")
+        replacement.content_hash = "hash-redis-new"
+        replacement.embedding_model = "test-model"
+        replacement.embedding_dimension = 2
+        store.replace_document("one", [replacement], [[1.0, 0.0]], "signature")
+        assert {chunk.chunk_id for chunk, _ in store.all()} == {"redis-new", "api"}
+    with ChromaStore(path, "test-rag") as reopened:
+        assert reopened.signature() == "signature"
+        assert {chunk.chunk_id for chunk, _ in reopened.all()} == {"redis-new", "api"}
+
+
+def test_chroma_store_rejects_incompatible_signature_before_mutation(tmp_path):
+    with ChromaStore(tmp_path / "chroma", "test-rag") as store:
+        chunk = make_chunk("old")
+        chunk.content_hash, chunk.embedding_model, chunk.embedding_dimension = "hash", "test", 1
+        store.replace_document("document", [chunk], [[1.0]], "first")
+        with pytest.raises(ValueError, match="configuration differs"):
+            store.replace_document("document", [make_chunk("new")], [[1.0]], "second")
+        assert [chunk.chunk_id for chunk, _ in store.all()] == ["old"]
+
+
+@pytest.mark.parametrize("factory", [
+    lambda path: Store(path / "index.sqlite"),
+    lambda path: ChromaStore(path / "chroma", "test-rag"),
+])
+def test_clear_removes_only_the_configured_collection(tmp_path, factory):
+    with factory(tmp_path) as store:
+        chunk = make_chunk("one")
+        chunk.content_hash, chunk.embedding_model, chunk.embedding_dimension = "hash", "test", 1
+        store.replace_document("document", [chunk], [[1.0]], "signature")
+        store.clear()
+        assert store.all() == []
+        assert store.signature() is None
